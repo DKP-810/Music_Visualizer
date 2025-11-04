@@ -56,6 +56,8 @@ class AudioVisualizer:
         self.min_db = 20
         self.max_db = 75
         self.color_scheme = "rainbow"  # "rainbow" or "green"
+        self.reflection_enabled = True  # Glass reflection effect
+        self.reflection_intensity = 0.6  # Reflection opacity multiplier (0.0 - 1.0)
 
         # Visualization data
         self.bar_heights = np.zeros(num_bars)
@@ -181,6 +183,36 @@ class AudioVisualizer:
             'states': ['rainbow', 'green'],
             'state_index': 0
         })
+        y_offset += 70
+
+        # Reflection Toggle Button
+        controls.append({
+            'type': 'button',
+            'name': 'Reflection',
+            'x': panel_x,
+            'y': y_offset,
+            'width': 180,
+            'height': 40,
+            'param': 'reflection',
+            'states': ['on', 'off'],
+            'state_index': 0
+        })
+        y_offset += 70
+
+        # Reflection Intensity Slider (only visible when reflection is on)
+        controls.append({
+            'type': 'slider',
+            'name': 'Reflection Intensity',
+            'x': panel_x,
+            'y': y_offset,
+            'width': 180,
+            'height': 20,
+            'min': 0,
+            'max': 100,
+            'value': int(self.reflection_intensity * 100),
+            'param': 'reflection_intensity',
+            'visible_when': 'reflection_enabled'  # Only show when reflection is on
+        })
 
         return controls
 
@@ -223,12 +255,21 @@ class AudioVisualizer:
         label_surface = self.font.render(control['name'], True, (200, 200, 200))
         self.screen.blit(label_surface, (x, y - 18))
 
-        # Button background
+        # Button background - color based on parameter type
         current_state = control['states'][control['state_index']]
-        if current_state == 'rainbow':
-            color = (100, 50, 150)
+
+        if control['param'] == 'color_scheme':
+            if current_state == 'rainbow':
+                color = (100, 50, 150)
+            else:
+                color = (0, 100, 50)
+        elif control['param'] == 'reflection':
+            if current_state == 'on':
+                color = (50, 120, 180)  # Blue for reflection on
+            else:
+                color = (60, 60, 60)  # Gray for reflection off
         else:
-            color = (0, 100, 50)
+            color = (80, 80, 80)  # Default gray
 
         pygame.draw.rect(self.screen, color, (x, y, width, height))
         pygame.draw.rect(self.screen, (200, 200, 200), (x, y, width, height), 2)
@@ -256,14 +297,20 @@ class AudioVisualizer:
         elif control['param'] == 'min_db':
             # Invert sensitivity: higher slider value = lower min_db = more sensitive
             self.min_db = 60 - int(new_value)
+        elif control['param'] == 'reflection_intensity':
+            # Convert 0-100 to 0.0-1.0
+            self.reflection_intensity = int(new_value) / 100.0
 
     def _handle_button_click(self, control):
         """Handle clicking a button"""
+        # Toggle between states
+        control['state_index'] = (control['state_index'] + 1) % len(control['states'])
+
         if control['param'] == 'color_scheme':
-            # Toggle between states
-            control['state_index'] = (control['state_index'] + 1) % len(control['states'])
             self.color_scheme = control['states'][control['state_index']]
             self._update_colors()
+        elif control['param'] == 'reflection':
+            self.reflection_enabled = control['states'][control['state_index']] == 'on'
 
     def _update_bar_count(self, new_count):
         """Update the number of bars dynamically"""
@@ -391,10 +438,14 @@ class AudioVisualizer:
 
         return np.array(band_amplitudes)
 
-    def _draw_bar(self, x, y, width, height, bar_index):
+    def _draw_bar(self, x, y, width, height, bar_index, base_y=None):
         """Draw a segmented frequency bar with retro glow effect"""
         if height < 1:
             return
+
+        # If base_y not provided, use the bottom of bar's drawing area
+        if base_y is None:
+            base_y = y + height
 
         # Calculate color based on bar position (left to right)
         color_pos = int((bar_index / (self.num_bars - 1)) * (len(self.colors) - 1))
@@ -410,7 +461,7 @@ class AudioVisualizer:
 
         # Draw segments from bottom to top
         for seg in range(num_segments):
-            seg_y = self.height - ((seg + 1) * total_segment_height)
+            seg_y = base_y - ((seg + 1) * total_segment_height)
 
             if seg_y < y:  # Don't draw above the bar height
                 break
@@ -452,6 +503,98 @@ class AudioVisualizer:
         # Bright white center
         pygame.draw.rect(self.screen, (255, 255, 255),
                         (x, y, width, peak_height))
+
+    def _draw_bar_reflection(self, x, mirror_y, width, height, bar_index, glass_y):
+        """Draw a mirrored reflection of a bar with fade gradient"""
+        if height < 1:
+            return
+
+        # Calculate color based on bar position
+        color_pos = int((bar_index / (self.num_bars - 1)) * (len(self.colors) - 1))
+        base_color = self.colors[color_pos]
+
+        # Desaturate the reflection color slightly
+        desaturated_color = tuple(int(c * 0.85) for c in base_color)
+
+        # Segment settings (same as main bars)
+        segment_height = 4
+        segment_gap = 2
+        total_segment_height = segment_height + segment_gap
+        num_segments = int(height / total_segment_height)
+
+        # Draw segments from top to bottom (mirrored)
+        for seg in range(num_segments):
+            seg_y = mirror_y + (seg * total_segment_height)
+
+            # Calculate fade based on distance from glass surface
+            distance_from_glass = seg_y - glass_y
+            max_reflection_height = self.height - glass_y
+            fade_ratio = 1.0 - (distance_from_glass / max_reflection_height)
+            fade_ratio = max(0, min(1, fade_ratio))  # Clamp 0-1
+
+            # Apply exponential fade for more realistic look
+            fade_ratio = fade_ratio ** 1.5
+
+            # Base opacity for reflection (adjustable via reflection_intensity)
+            base_opacity = self.reflection_intensity
+            opacity = base_opacity * fade_ratio
+
+            if opacity < 0.01:  # Don't draw nearly invisible segments
+                continue
+
+            # Apply opacity to colors
+            glow_outer = tuple(int(c * 0.3 * opacity) for c in desaturated_color)
+            glow_middle = tuple(int(c * 0.6 * opacity) for c in desaturated_color)
+            bright_center = tuple(int(min(255, c * 1.2) * opacity) for c in desaturated_color)
+
+            # Create surfaces with alpha for proper blending
+            # Outer glow
+            if opacity > 0.05:
+                surf_outer = pygame.Surface((int(width) + 2, segment_height + 2), pygame.SRCALPHA)
+                surf_outer.fill((*glow_outer, int(255 * opacity)))
+                self.screen.blit(surf_outer, (x - 1, seg_y - 1))
+
+            # Middle glow
+            surf_middle = pygame.Surface((int(width), segment_height), pygame.SRCALPHA)
+            surf_middle.fill((*glow_middle, int(255 * opacity)))
+            self.screen.blit(surf_middle, (x, seg_y))
+
+            # Bright center
+            center_h = max(1, segment_height - 2)
+            surf_center = pygame.Surface((max(1, int(width) - 2), center_h), pygame.SRCALPHA)
+            surf_center.fill((*bright_center, int(255 * opacity * 0.8)))
+            self.screen.blit(surf_center, (x + 1, seg_y + 1))
+
+    def _draw_peak_reflection(self, x, mirror_y, width, bar_index, glass_y):
+        """Draw a mirrored reflection of a peak indicator with fade"""
+        # Calculate opacity based on distance from glass
+        distance_from_glass = mirror_y - glass_y
+        max_reflection_height = self.height - glass_y
+        fade_ratio = 1.0 - (distance_from_glass / max_reflection_height)
+        fade_ratio = max(0, min(1, fade_ratio)) ** 1.5
+        # Peaks use half the reflection intensity
+        opacity = (self.reflection_intensity * 0.5) * fade_ratio
+
+        if opacity < 0.01:
+            return
+
+        # Calculate color
+        color_pos = int((bar_index / (self.num_bars - 1)) * (len(self.colors) - 1))
+        base_color = self.colors[color_pos]
+        desaturated = tuple(int(c * 0.85) for c in base_color)
+
+        peak_height = 4
+
+        # Outer glow
+        surf_glow = pygame.Surface((int(width) + 2, peak_height + 2), pygame.SRCALPHA)
+        glow_color = tuple(int(c * 0.5 * opacity) for c in desaturated)
+        surf_glow.fill((*glow_color, int(255 * opacity)))
+        self.screen.blit(surf_glow, (x - 1, mirror_y - 1))
+
+        # White center (dimmed for reflection)
+        surf_center = pygame.Surface((int(width), peak_height), pygame.SRCALPHA)
+        surf_center.fill((255, 255, 255, int(200 * opacity)))
+        self.screen.blit(surf_center, (x, mirror_y))
 
     def update(self):
         """Update visualization with latest audio data"""
@@ -507,26 +650,68 @@ class AudioVisualizer:
                         (self.visualizer_width, 0),
                         (self.visualizer_width, self.height), 2)
 
+        # Calculate layout - if reflection is enabled, split the visualizer area
+        if self.reflection_enabled:
+            # Glass surface at 60% down the visualizer height
+            glass_y = int(self.height * 0.6)
+            visualizer_height = glass_y  # Bars only go up to glass surface
+        else:
+            glass_y = self.height
+            visualizer_height = self.height
+
         # Calculate bar dimensions to fill visualizer width (not full width)
         bar_spacing = 2
         total_bars_space = self.visualizer_width - (bar_spacing * (self.num_bars - 1))
         bar_width = total_bars_space / self.num_bars
 
+        # Scale bar heights to fit in the available visualizer height
+        height_scale = visualizer_height / self.height if self.reflection_enabled else 1.0
+
         # Draw each frequency bar
         for i in range(self.num_bars):
             x = i * (bar_width + bar_spacing)
-            bar_height = self.bar_heights[i]
-            y = self.height - bar_height
+            bar_height = self.bar_heights[i] * height_scale
+            y = glass_y - bar_height
 
-            # Draw the main bar
-            self._draw_bar(x, y, bar_width, bar_height, i)
+            # Draw the main bar (grows upward from glass surface)
+            self._draw_bar(x, y, bar_width, bar_height, i, base_y=glass_y)
 
             # Draw the peak indicator
-            peak_y = self.height - self.peak_heights[i]
+            peak_height = self.peak_heights[i] * height_scale
+            peak_y = glass_y - peak_height
             self._draw_peak(x, peak_y, bar_width, i)
+
+        # Draw glass surface line (if reflection enabled)
+        if self.reflection_enabled:
+            # Subtle horizontal line at glass surface
+            pygame.draw.line(self.screen, (80, 80, 80),
+                            (0, glass_y),
+                            (self.visualizer_width, glass_y), 1)
+
+            # Draw reflections below the glass surface
+            for i in range(self.num_bars):
+                x = i * (bar_width + bar_spacing)
+                bar_height = self.bar_heights[i] * height_scale
+
+                # Mirror position starts at glass surface
+                mirror_y = glass_y
+
+                # Draw reflected bar
+                self._draw_bar_reflection(x, mirror_y, bar_width, bar_height, i, glass_y)
+
+                # Draw reflected peak
+                peak_height = self.peak_heights[i] * height_scale
+                peak_mirror_y = glass_y + peak_height
+                self._draw_peak_reflection(x, peak_mirror_y, bar_width, i, glass_y)
 
         # Draw controls
         for control in self.controls:
+            # Check if control should be visible
+            if 'visible_when' in control:
+                # Only show if the condition is met
+                if control['visible_when'] == 'reflection_enabled' and not self.reflection_enabled:
+                    continue
+
             if control['type'] == 'slider':
                 self._draw_slider(control)
             elif control['type'] == 'button':
