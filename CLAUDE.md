@@ -13,10 +13,13 @@
 - ✅ Real-time bar count adjustment (10-100)
 - ✅ Real-time sensitivity control
 - ✅ Color scheme toggle (Rainbow ↔ Green)
+- ✅ Glass reflection effect with adjustable intensity
+- ✅ Reflection toggle button and conditional intensity slider
 - ✅ Mouse interaction support
 - ✅ Resizable window with responsive controls
 - ✅ Git repository initialized and pushed to GitHub
 - ✅ GitHub repository: https://github.com/DKP-810/Music_Visualizer
+- ✅ Feature branch: `reflection-enabled`
 
 ## Recent Changes
 
@@ -59,10 +62,41 @@
 - `visualizer.py:502-533` - Updated draw() to render control panel
 - `visualizer.py:569-590` - Added mouse event handling in run()
 
+#### Part 3: Glass Reflection Effect
+**Implemented Glass Reflection with Adjustable Intensity**
+- Added glass surface line at 60% down the screen
+- Bars grow upward from glass surface
+- Mirrored reflections extend downward with exponential fade
+- Desaturated reflection colors (85% brightness) for realism
+- Adjustable reflection intensity (0-100%)
+- Conditional UI: intensity slider only visible when reflection enabled
+
+**New Features:**
+- **Reflection Toggle** - Turn glass reflection effect on/off
+- **Reflection Intensity Slider** - Adjust opacity (0-100%, default 60%)
+- **Exponential Fade** - fade_ratio^1.5 for realistic gradient
+- **Peak Reflections** - Use half intensity of bar reflections
+- **Split Layout** - 60% bars / 40% reflection area
+
+**Key Files Modified:**
+- `visualizer.py:55-60` - Added reflection_enabled and reflection_intensity parameters
+- `visualizer.py:186-217` - Added reflection toggle button and intensity slider
+- `visualizer.py:256-300` - Updated _draw_bar() with base_y anchor parameter
+- `visualizer.py:507-598` - New _draw_bar_reflection() and _draw_peak_reflection() methods
+- `visualizer.py:653-706` - Updated draw() with glass surface layout and reflection rendering
+- `visualizer.py:713-717` - Added conditional control visibility logic
+
+**Bug Fixes:**
+- Fixed bar drawing anchor point from self.height to glass_y for proper mirroring
+- Fixed sensitivity slider inversion (right = more sensitive)
+- Fixed reflection darkness with adjustable intensity control
+
 **Git Configuration:**
 - User: DKP-810
 - Email: DKP-810@users.noreply.github.com
 - Repository: https://github.com/DKP-810/Music_Visualizer
+- Main branch: `master`
+- Feature branch: `reflection-enabled`
 
 ## Technical Architecture
 
@@ -86,6 +120,8 @@
 - Peak hold time: 30 frames (~0.5 seconds)
 - Peak fall speed: 0.5 pixels/frame
 - Rainbow gradient: 256-color smooth transitions
+- Glass reflection: 60/40 split layout with exponential fade
+- Reflection intensity: Adjustable 0.0-1.0 (default 0.6)
 
 ## Project Structure
 ```
@@ -112,15 +148,17 @@ Users can modify these parameters in `visualizer.py`:
 
 **Visualization:**
 - `num_bars` (default: 38) - Number of frequency bands
-- `segment_height` (line 210: 4) - Height of each LED segment
-- `segment_gap` (line 211: 2) - Gap between segments
+- `segment_height` (line 464: 4) - Height of each LED segment
+- `segment_gap` (line 465: 2) - Gap between segments
 - `peak_hold_time` (default: 30 frames) - Peak hold duration
 - `peak_fall_speed` (default: 0.5) - Peak fall rate
 - `bar_smoothing` (default: 0.7) - Animation smoothness
+- `reflection_enabled` (line 59: True) - Enable glass reflection
+- `reflection_intensity` (line 60: 0.6) - Reflection opacity (0.0-1.0)
 
 **Audio Sensitivity:**
-- `min_db` (line 273: 20) - Minimum dB threshold
-- `max_db` (line 274: 75) - Maximum dB for full height
+- `min_db` (line 56: 20) - Minimum dB threshold
+- `max_db` (line 57: 75) - Maximum dB for full height
 
 ## Future Enhancement Ideas
 - [ ] Add color theme presets (classic green, blue ice, fire, etc.)
@@ -156,7 +194,23 @@ git status
 git add .
 git commit -m "message"
 git push
+
+# Branch operations
+git branch                    # List branches
+git checkout branch-name      # Switch to branch
+git checkout -b new-branch    # Create and switch to new branch
+git merge branch-name         # Merge branch into current branch
 ```
+
+## Git Branching Strategy
+**Current Branches:**
+- `master` - Main development branch (includes all features)
+- `reflection-enabled` - Feature branch created from master at reflection commit
+
+**Note:** Both branches currently have identical code. The `reflection-enabled` branch was created to demonstrate branching workflow. In the future, you could:
+- Create a `no-reflection` branch from an earlier commit (before reflection was added)
+- Keep master as the full-featured version
+- Maintain different versions for different use cases
 
 ## Reference Materials
 - Reference image: `sample_visual.png` - Shows desired segmented retro aesthetic
