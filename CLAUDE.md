@@ -7,14 +7,22 @@
 - ✅ Core visualizer implemented with 38-band spectrum analysis
 - ✅ Segmented bar rendering with retro glow effects
 - ✅ Rainbow gradient color scheme
+- ✅ Classic green terminal color scheme
 - ✅ Peak hold indicators
-- ✅ Resizable window support
+- ✅ Interactive control panel with sliders and buttons
+- ✅ Real-time bar count adjustment (10-100)
+- ✅ Real-time sensitivity control
+- ✅ Color scheme toggle (Rainbow ↔ Green)
+- ✅ Mouse interaction support
+- ✅ Resizable window with responsive controls
 - ✅ Git repository initialized and pushed to GitHub
 - ✅ GitHub repository: https://github.com/DKP-810/Music_Visualizer
 
 ## Recent Changes
 
 ### Session 1 (2025-11-04)
+
+#### Part 1: Retro Segmented Bar Design
 **Implemented Retro Segmented Bar Design**
 - Updated visualization from solid bars to segmented LED-style bars
 - Each bar now consists of horizontal segments (4px height, 2px gap)
@@ -26,14 +34,35 @@
 - Modified peak indicators to match segmented style with glow
 
 **Key Files Modified:**
-- `visualizer.py:61-95` - `_generate_rainbow_gradient()` - Updated color transitions
+- `visualizer.py:79-113` - `_generate_rainbow_gradient()` - Updated color transitions
 - `visualizer.py:199-239` - `_draw_bar()` - Complete rewrite for segmented rendering
 - `visualizer.py:240-260` - `_draw_peak()` - Updated for glowing peak indicators
+
+#### Part 2: Interactive Control Panel
+**Added Real-Time Control Panel**
+- Created 200px control dock on right side of visualizer
+- Implemented interactive sliders and toggle button
+- Added green monochrome color scheme (classic terminal style)
+- All controls work in real-time without interrupting playback
+
+**New Features:**
+- **Bar Count Slider** - Adjust 10-100 bars with smooth interpolation
+- **Sensitivity Slider** - Inverted scale (right = more sensitive)
+- **Color Scheme Toggle** - Switch between Rainbow and Green modes
+- **Mouse Interaction** - Click, drag, and release support
+- **Responsive UI** - Controls reposition on window resize
+
+**Key Files Modified:**
+- `visualizer.py:37-72` - Added control panel initialization and UI state
+- `visualizer.py:115-127` - `_generate_green_gradient()` - Classic terminal green
+- `visualizer.py:136-289` - Control creation, drawing, and interaction handlers
+- `visualizer.py:502-533` - Updated draw() to render control panel
+- `visualizer.py:569-590` - Added mouse event handling in run()
 
 **Git Configuration:**
 - User: DKP-810
 - Email: DKP-810@users.noreply.github.com
-- Initial commit created with comprehensive project files
+- Repository: https://github.com/DKP-810/Music_Visualizer
 
 ## Technical Architecture
 
