@@ -58,6 +58,7 @@ class AudioVisualizer:
         self.color_scheme = "rainbow"  # "rainbow" or "green"
         self.reflection_enabled = True  # Glass reflection effect
         self.reflection_intensity = 0.6  # Reflection opacity multiplier (0.0 - 1.0)
+        self.reflection_blur = 2  # Blur radius for reflection (0 - 10 pixels)
 
         # Visualization data
         self.bar_heights = np.zeros(num_bars)
@@ -213,6 +214,22 @@ class AudioVisualizer:
             'param': 'reflection_intensity',
             'visible_when': 'reflection_enabled'  # Only show when reflection is on
         })
+        y_offset += 60
+
+        # Reflection Blur Slider (only visible when reflection is on)
+        controls.append({
+            'type': 'slider',
+            'name': 'Blur Amount',
+            'x': panel_x,
+            'y': y_offset,
+            'width': 180,
+            'height': 20,
+            'min': 0,
+            'max': 10,
+            'value': self.reflection_blur,
+            'param': 'reflection_blur',
+            'visible_when': 'reflection_enabled'  # Only show when reflection is on
+        })
 
         return controls
 
@@ -300,6 +317,9 @@ class AudioVisualizer:
         elif control['param'] == 'reflection_intensity':
             # Convert 0-100 to 0.0-1.0
             self.reflection_intensity = int(new_value) / 100.0
+        elif control['param'] == 'reflection_blur':
+            # Blur radius 0-10 pixels
+            self.reflection_blur = int(new_value)
 
     def _handle_button_click(self, control):
         """Handle clicking a button"""
@@ -311,6 +331,26 @@ class AudioVisualizer:
             self._update_colors()
         elif control['param'] == 'reflection':
             self.reflection_enabled = control['states'][control['state_index']] == 'on'
+
+    def _apply_blur(self, surface, blur_radius):
+        """Apply a simple box blur to a surface using downscale/upscale"""
+        if blur_radius <= 0:
+            return surface
+
+        # Get surface dimensions
+        width, height = surface.get_size()
+
+        # Apply blur by scaling down and back up multiple times
+        # Each iteration creates a smoother blur
+        temp_surface = surface.copy()
+        for _ in range(blur_radius):
+            # Scale down by 50% and back up - this creates blur effect
+            small_w = max(1, width // 2)
+            small_h = max(1, height // 2)
+            temp_surface = pygame.transform.smoothscale(temp_surface, (small_w, small_h))
+            temp_surface = pygame.transform.smoothscale(temp_surface, (width, height))
+
+        return temp_surface
 
     def _update_bar_count(self, new_count):
         """Update the number of bars dynamically"""
@@ -505,7 +545,7 @@ class AudioVisualizer:
                         (x, y, width, peak_height))
 
     def _draw_bar_reflection(self, x, mirror_y, width, height, bar_index, glass_y):
-        """Draw a mirrored reflection of a bar with fade gradient"""
+        """Draw a mirrored reflection of a bar with fade gradient, 45-degree angle, and water ripple distortion"""
         if height < 1:
             return
 
@@ -522,7 +562,7 @@ class AudioVisualizer:
         total_segment_height = segment_height + segment_gap
         num_segments = int(height / total_segment_height)
 
-        # Draw segments from top to bottom (mirrored)
+        # Draw segments from top to bottom (mirrored) with 45-degree angle
         for seg in range(num_segments):
             seg_y = mirror_y + (seg * total_segment_height)
 
@@ -542,6 +582,15 @@ class AudioVisualizer:
             if opacity < 0.01:  # Don't draw nearly invisible segments
                 continue
 
+            # Calculate 45-degree angle offset (shifts right as it goes down)
+            # For 45 degrees: horizontal offset = vertical offset
+            angle_offset_x = distance_from_glass
+
+            # Check if reflection would be off-screen
+            seg_x = x + angle_offset_x
+            if seg_x > self.visualizer_width or seg_x < -width:
+                continue
+
             # Apply opacity to colors
             glow_outer = tuple(int(c * 0.3 * opacity) for c in desaturated_color)
             glow_middle = tuple(int(c * 0.6 * opacity) for c in desaturated_color)
@@ -552,21 +601,21 @@ class AudioVisualizer:
             if opacity > 0.05:
                 surf_outer = pygame.Surface((int(width) + 2, segment_height + 2), pygame.SRCALPHA)
                 surf_outer.fill((*glow_outer, int(255 * opacity)))
-                self.screen.blit(surf_outer, (x - 1, seg_y - 1))
+                self.screen.blit(surf_outer, (seg_x - 1, seg_y - 1))
 
             # Middle glow
             surf_middle = pygame.Surface((int(width), segment_height), pygame.SRCALPHA)
             surf_middle.fill((*glow_middle, int(255 * opacity)))
-            self.screen.blit(surf_middle, (x, seg_y))
+            self.screen.blit(surf_middle, (seg_x, seg_y))
 
             # Bright center
             center_h = max(1, segment_height - 2)
             surf_center = pygame.Surface((max(1, int(width) - 2), center_h), pygame.SRCALPHA)
             surf_center.fill((*bright_center, int(255 * opacity * 0.8)))
-            self.screen.blit(surf_center, (x + 1, seg_y + 1))
+            self.screen.blit(surf_center, (seg_x + 1, seg_y + 1))
 
     def _draw_peak_reflection(self, x, mirror_y, width, bar_index, glass_y):
-        """Draw a mirrored reflection of a peak indicator with fade"""
+        """Draw a mirrored reflection of a peak indicator with fade, 45-degree angle, and water ripple"""
         # Calculate opacity based on distance from glass
         distance_from_glass = mirror_y - glass_y
         max_reflection_height = self.height - glass_y
@@ -576,6 +625,14 @@ class AudioVisualizer:
         opacity = (self.reflection_intensity * 0.5) * fade_ratio
 
         if opacity < 0.01:
+            return
+
+        # Calculate 45-degree angle offset
+        angle_offset_x = distance_from_glass
+
+        # Check if reflection would be off-screen
+        peak_x = x + angle_offset_x
+        if peak_x > self.visualizer_width or peak_x < -width:
             return
 
         # Calculate color
@@ -589,12 +646,12 @@ class AudioVisualizer:
         surf_glow = pygame.Surface((int(width) + 2, peak_height + 2), pygame.SRCALPHA)
         glow_color = tuple(int(c * 0.5 * opacity) for c in desaturated)
         surf_glow.fill((*glow_color, int(255 * opacity)))
-        self.screen.blit(surf_glow, (x - 1, mirror_y - 1))
+        self.screen.blit(surf_glow, (peak_x - 1, mirror_y - 1))
 
         # White center (dimmed for reflection)
         surf_center = pygame.Surface((int(width), peak_height), pygame.SRCALPHA)
         surf_center.fill((255, 255, 255, int(200 * opacity)))
-        self.screen.blit(surf_center, (x, mirror_y))
+        self.screen.blit(surf_center, (peak_x, mirror_y))
 
     def update(self):
         """Update visualization with latest audio data"""
@@ -688,21 +745,40 @@ class AudioVisualizer:
                             (0, glass_y),
                             (self.visualizer_width, glass_y), 1)
 
-            # Draw reflections below the glass surface
+            # Create a temporary surface for reflections
+            reflection_height = self.height - glass_y
+            reflection_surface = pygame.Surface((self.visualizer_width, reflection_height), pygame.SRCALPHA)
+            reflection_surface.fill((0, 0, 0, 0))  # Transparent background
+
+            # Temporarily redirect drawing to reflection surface
+            original_screen = self.screen
+            self.screen = reflection_surface
+
+            # Draw reflections to the temporary surface (adjust Y coordinates)
             for i in range(self.num_bars):
                 x = i * (bar_width + bar_spacing)
                 bar_height = self.bar_heights[i] * height_scale
 
-                # Mirror position starts at glass surface
-                mirror_y = glass_y
+                # Mirror position starts at 0 on reflection surface (which is glass_y on main screen)
+                mirror_y = 0
 
                 # Draw reflected bar
-                self._draw_bar_reflection(x, mirror_y, bar_width, bar_height, i, glass_y)
+                self._draw_bar_reflection(x, mirror_y, bar_width, bar_height, i, glass_y=0)
 
                 # Draw reflected peak
                 peak_height = self.peak_heights[i] * height_scale
-                peak_mirror_y = glass_y + peak_height
-                self._draw_peak_reflection(x, peak_mirror_y, bar_width, i, glass_y)
+                peak_mirror_y = peak_height
+                self._draw_peak_reflection(x, peak_mirror_y, bar_width, i, glass_y=0)
+
+            # Restore original screen
+            self.screen = original_screen
+
+            # Apply blur to the reflection surface
+            if self.reflection_blur > 0:
+                reflection_surface = self._apply_blur(reflection_surface, self.reflection_blur)
+
+            # Blit the blurred reflection surface to the main screen
+            self.screen.blit(reflection_surface, (0, glass_y))
 
         # Draw controls
         for control in self.controls:

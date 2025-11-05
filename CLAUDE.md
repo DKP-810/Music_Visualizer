@@ -13,8 +13,10 @@
 - ✅ Real-time bar count adjustment (10-100)
 - ✅ Real-time sensitivity control
 - ✅ Color scheme toggle (Rainbow ↔ Green)
-- ✅ Glass reflection effect with adjustable intensity
-- ✅ Reflection toggle button and conditional intensity slider
+- ✅ Glass reflection effect with 45-degree angle
+- ✅ Adjustable reflection intensity (0-100%)
+- ✅ Gaussian blur effect for reflections (0-10 radius)
+- ✅ Reflection toggle button with conditional sliders
 - ✅ Mouse interaction support
 - ✅ Resizable window with responsive controls
 - ✅ Git repository initialized and pushed to GitHub
@@ -22,6 +24,65 @@
 - ✅ Feature branch: `reflection-enabled`
 
 ## Recent Changes
+
+### Session 2 (2025-11-04) - 45-Degree Reflection & Water Ripple Effect
+
+#### Part 1: 45-Degree Angled Reflection
+**Implemented Angled Glass Reflection**
+- Changed reflection from vertical mirror to 45-degree diagonal
+- Reflections now shift horizontally as they extend downward
+- Formula: `angle_offset_x = distance_from_glass` for perfect 45° angle
+- Added bounds checking to prevent off-screen rendering
+- Both bar segments and peak indicators use angled reflection
+
+**Key Files Modified:**
+- `visualizer.py:303-320` - Added 45-degree offset calculation in `_draw_bar_reflection()`
+- `visualizer.py:358-373` - Added matching offset in `_draw_peak_reflection()`
+
+**User Feedback:** "It worked great!"
+
+#### Part 2: Gaussian Blur Effect for Reflections
+**Replaced Water Ripple with Gaussian-Style Blur**
+- Removed water ripple distortion feature (didn't achieve desired effect)
+- Implemented adjustable blur effect applied only to reflections
+- New "Blur Amount" slider (0-10) controlling blur intensity
+- Default: 2 (subtle blur for glass effect)
+- Conditional UI: slider only visible when reflection enabled
+
+**Technical Implementation:**
+- Uses `reflection_blur` parameter (0-10 pixels radius)
+- Box blur approximation using pygame smoothscale downsampling/upsampling
+- Reflections rendered to temporary SRCALPHA surface
+- Blur applied via iterative 50% downscale → upscale cycles
+- Blurred surface composited onto main screen at glass_y position
+- More iterations = stronger blur effect
+
+**Key Files Modified:**
+- `visualizer.py:61` - Changed `reflection_roughness` to `reflection_blur` parameter (default 2)
+- `visualizer.py:219-232` - Updated slider control to "Blur Amount" (0-10 range)
+- `visualizer.py:320-322` - Updated slider handler for blur radius
+- `visualizer.py:335-353` - Added `_apply_blur()` helper method
+- `visualizer.py:748-781` - Modified reflection rendering to use temporary surface with blur
+- `visualizer.py:565-570` - Removed ripple X-offset distortion from bar reflection
+- `visualizer.py:610-614` - Removed ripple X-offset distortion from peak reflection
+
+**Development Process:**
+- Initially implemented water ripple with X+Y offsets (Part 2a)
+- User reported physics issues, revised to X-offset only (Part 2b)
+- User decided ripple effect didn't look as desired
+- Replaced with blur effect for softer, more realistic glass/water appearance
+
+**User Feedback:** User requested removal of ripple feature in favor of blur
+
+#### Part 3: App-Specific Audio Capture Research
+**Research Only - Not Implemented**
+User asked about isolating audio by application (e.g., YouTube Music only). Provided analysis of options:
+1. WASAPI Per-Application Capture (limited support)
+2. Virtual Audio Cable (requires extra software)
+3. App Volume API with pycaw (best option - enumerate audio sessions)
+4. Process Injection (complex/risky)
+
+**Decision:** User chose not to pursue this feature yet
 
 ### Session 1 (2025-11-04)
 
@@ -121,7 +182,9 @@
 - Peak fall speed: 0.5 pixels/frame
 - Rainbow gradient: 256-color smooth transitions
 - Glass reflection: 60/40 split layout with exponential fade
+- 45-degree angled reflection (diagonal distortion)
 - Reflection intensity: Adjustable 0.0-1.0 (default 0.6)
+- Reflection blur: Box blur approximation (0-10 radius, default 2)
 
 ## Project Structure
 ```
@@ -148,13 +211,14 @@ Users can modify these parameters in `visualizer.py`:
 
 **Visualization:**
 - `num_bars` (default: 38) - Number of frequency bands
-- `segment_height` (line 464: 4) - Height of each LED segment
-- `segment_gap` (line 465: 2) - Gap between segments
+- `segment_height` (line 213: 4) - Height of each LED segment
+- `segment_gap` (line 214: 2) - Gap between segments
 - `peak_hold_time` (default: 30 frames) - Peak hold duration
 - `peak_fall_speed` (default: 0.5) - Peak fall rate
 - `bar_smoothing` (default: 0.7) - Animation smoothness
 - `reflection_enabled` (line 59: True) - Enable glass reflection
 - `reflection_intensity` (line 60: 0.6) - Reflection opacity (0.0-1.0)
+- `reflection_blur` (line 61: 2) - Reflection blur radius (0-10 pixels)
 
 **Audio Sensitivity:**
 - `min_db` (line 56: 20) - Minimum dB threshold
