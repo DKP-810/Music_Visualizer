@@ -11,12 +11,24 @@ import threading
 import queue
 import sys
 import struct
+import ctypes
+import os
+
+# Windows DPI awareness fix - must be called before pygame.init()
+if sys.platform == 'win32':
+    try:
+        # Tell Windows we're DPI aware so it doesn't scale our window
+        ctypes.windll.user32.SetProcessDPIAware()
+    except:
+        pass
 
 class AudioVisualizer:
     def __init__(self, width=1280, height=720, num_bars=38):
         pygame.init()
 
-        # Window settings
+        # Window settings - store the REQUESTED dimensions before any scaling
+        self.original_width = width
+        self.original_height = height
         self.width = width
         self.height = height
         self.num_bars = num_bars
@@ -34,6 +46,10 @@ class AudioVisualizer:
         self.width = default_width if width == 1280 else width
         self.height = default_height if height == 720 else height
 
+        # Update original dimensions if we're using defaults
+        self.original_width = self.width
+        self.original_height = self.height
+
         # Control panel settings
         self.panel_width = 200
         self.visualizer_width = self.width - self.panel_width
@@ -41,6 +57,9 @@ class AudioVisualizer:
         # Create resizable windowed mode (explicitly NOT fullscreen)
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
         pygame.display.set_caption("Audio Visualizer")
+
+        # Fullscreen state
+        self.is_fullscreen = False
 
         # Font for UI
         pygame.font.init()
@@ -230,6 +249,21 @@ class AudioVisualizer:
             'param': 'reflection_blur',
             'visible_when': 'reflection_enabled'  # Only show when reflection is on
         })
+        y_offset += 60
+
+        # Peak Fall Speed Slider
+        controls.append({
+            'type': 'slider',
+            'name': 'Peak Fall Speed',
+            'x': panel_x,
+            'y': y_offset,
+            'width': 180,
+            'height': 20,
+            'min': 1,
+            'max': 50,
+            'value': int(self.peak_fall_speed * 10),  # Convert 0.5 to 5 for display
+            'param': 'peak_fall_speed'
+        })
 
         return controls
 
@@ -320,6 +354,9 @@ class AudioVisualizer:
         elif control['param'] == 'reflection_blur':
             # Blur radius 0-10 pixels
             self.reflection_blur = int(new_value)
+        elif control['param'] == 'peak_fall_speed':
+            # Convert slider value (1-50) to fall speed (0.1-5.0)
+            self.peak_fall_speed = int(new_value) / 10.0
 
     def _handle_button_click(self, control):
         """Handle clicking a button"""
@@ -795,14 +832,67 @@ class AudioVisualizer:
 
         pygame.display.flip()
 
-    def handle_resize(self, new_width, new_height):
-        """Handle window resize"""
-        self.width = new_width
-        self.height = new_height
+    def toggle_fullscreen(self):
+        """Toggle between fullscreen and windowed mode"""
+        # Prevent resize events from interfering
+        self.ignore_resize = True
+
+        self.is_fullscreen = not self.is_fullscreen
+
+        if self.is_fullscreen:
+            print("Switching to fullscreen mode...")
+            print(f"Current dimensions before fullscreen: {self.width}x{self.height}")
+
+            # Try to get display info
+            try:
+                # Get all available fullscreen modes
+                modes = pygame.display.list_modes()
+                print(f"Available display modes: {modes[:5]}...")  # Show first 5
+
+                # Use the largest available mode (native resolution)
+                if modes and modes[0] != -1:
+                    screen_width, screen_height = modes[0]
+                    print(f"Using highest resolution: {screen_width}x{screen_height}")
+                else:
+                    # Fallback to display info
+                    display_info = pygame.display.Info()
+                    screen_width = display_info.current_w
+                    screen_height = display_info.current_h
+                    print(f"Fallback to display info: {screen_width}x{screen_height}")
+
+                # Use pygame's built-in fullscreen mode with explicit resolution
+                self.screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
+
+                # Update dimensions to fullscreen
+                self.width = screen_width
+                self.height = screen_height
+                print(f"Fullscreen mode set: {self.width}x{self.height}")
+            except Exception as e:
+                print(f"Error setting fullscreen: {e}")
+                self.is_fullscreen = False
+        else:
+            print("Switching to windowed mode...")
+            print(f"Restoring to original dimensions: {self.original_width}x{self.original_height}")
+
+            # Always restore to the original launch dimensions
+            self.screen = pygame.display.set_mode((self.original_width, self.original_height), pygame.RESIZABLE)
+
+            # Set our dimensions back to original
+            self.width = self.original_width
+            self.height = self.original_height
+            print(f"Windowed mode set: {self.width}x{self.height}")
+
+        # Update visualizer width
         self.visualizer_width = self.width - self.panel_width
-        self.screen = pygame.display.set_mode((new_width, new_height), pygame.RESIZABLE)
 
         # Update control positions
+        self._update_control_positions()
+
+        # Re-enable resize events after a short delay (let pending events clear)
+        self.ignore_resize_until = pygame.time.get_ticks() + 500  # Ignore for 500ms
+
+    def _update_control_positions(self):
+        """Update control panel positions after resize"""
         panel_x = self.visualizer_width + 10
         y_offset = 20
         for control in self.controls:
@@ -810,12 +900,29 @@ class AudioVisualizer:
             control['y'] = y_offset
             y_offset += 60 if control['type'] == 'slider' else 70
 
+    def handle_resize(self, new_width, new_height):
+        """Handle window resize"""
+        # Ignore resize events during and shortly after fullscreen toggle
+        if hasattr(self, 'ignore_resize_until') and pygame.time.get_ticks() < self.ignore_resize_until:
+            print(f"Ignoring resize event: {new_width}x{new_height}")
+            return
+
+        print(f"Handling resize to: {new_width}x{new_height}")
+        self.width = new_width
+        self.height = new_height
+        self.visualizer_width = self.width - self.panel_width
+        self.screen = pygame.display.set_mode((new_width, new_height), pygame.RESIZABLE)
+
+        # Update control positions
+        self._update_control_positions()
+
     def run(self):
         """Main loop"""
         clock = pygame.time.Clock()
 
         print("Audio Visualizer started!")
         print("Capturing system audio... Play some music to see the visualization!")
+        print("Press F11 to toggle fullscreen mode.")
         print("Press ESC or close the window to exit.")
 
         while self.running:
@@ -826,6 +933,9 @@ class AudioVisualizer:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         self.running = False
+                    elif event.key == pygame.K_F11:
+                        # F11 toggles fullscreen
+                        self.toggle_fullscreen()
                 elif event.type == pygame.VIDEORESIZE:
                     self.handle_resize(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
