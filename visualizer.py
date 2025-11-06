@@ -82,6 +82,9 @@ class AudioVisualizer:
 
         # Fullscreen state
         self.is_fullscreen = False
+        self.render_surface = None  # For scaled rendering in fullscreen
+        self.display_width = 0  # Actual display resolution
+        self.display_height = 0
 
         # Font for UI
         pygame.font.init()
@@ -197,8 +200,8 @@ class AudioVisualizer:
             (255, 220, 180),  # Warm white
         ]
 
-        # Layer 0: Background - small, slow, dim stars
-        for _ in range(30):
+        # Layer 0: Background - small, slow, dim stars (increased from 30 to 80)
+        for _ in range(80):
             x = random.uniform(0, self.width)
             y = random.uniform(0, self.height)
             size = random.uniform(0.5, 1.0)
@@ -206,8 +209,8 @@ class AudioVisualizer:
             color = random.choice(star_colors)
             self.stars.append(Star(x, y, size, speed, color, 0))
 
-        # Layer 1: Midground - medium stars
-        for _ in range(20):
+        # Layer 1: Midground - medium stars (increased from 20 to 50)
+        for _ in range(50):
             x = random.uniform(0, self.width)
             y = random.uniform(0, self.height)
             size = random.uniform(1.0, 2.0)
@@ -215,8 +218,8 @@ class AudioVisualizer:
             color = random.choice(star_colors)
             self.stars.append(Star(x, y, size, speed, color, 1))
 
-        # Layer 2: Foreground - large, fast, bright stars
-        for _ in range(10):
+        # Layer 2: Foreground - large, fast, bright stars (increased from 10 to 30)
+        for _ in range(30):
             x = random.uniform(0, self.width)
             y = random.uniform(0, self.height)
             size = random.uniform(2.0, 3.5)
@@ -292,7 +295,7 @@ class AudioVisualizer:
                 'width': 180,
                 'height': 20,
                 'min': 0,
-                'max': 300,
+                'max': 100,
                 'value': int(self.starfield_speed * 100),
                 'param': 'starfield_speed',
                 'visible_when': 'starfield_enabled'
@@ -460,8 +463,8 @@ class AudioVisualizer:
             # Convert slider value (1-50) to fall speed (0.1-5.0)
             self.peak_fall_speed = int(new_value) / 10.0
         elif control['param'] == 'starfield_speed':
-            # Convert slider value (0-300) to speed multiplier (0.0-3.0)
-            self.starfield_speed = int(new_value) / 100.0
+            # Convert slider value (0-100) to speed multiplier (0.0-6.0)
+            self.starfield_speed = int(new_value) / 100.0 * 6.0
 
     def _handle_button_click(self, control):
         """Handle clicking a button"""
@@ -848,8 +851,8 @@ class AudioVisualizer:
 
     def _update_starfield(self):
         """Update star positions with parallax scrolling"""
-        # Check if we should draw trails (warp speed at 80%+)
-        warp_speed = self.starfield_speed >= 2.4  # 80% of max (3.0)
+        # Check if we should draw trails (warp speed at 30%+)
+        warp_speed = self.starfield_speed >= 1.8  # 30% of max (6.0)
 
         for star in self.stars:
             # Move star to the left with speed multiplier
@@ -860,7 +863,8 @@ class AudioVisualizer:
                 # Add current position to trail
                 star.trail_positions.append((star.x, star.y))
                 # Keep trail length based on speed (faster = longer trails)
-                max_trail_length = int(10 + (self.starfield_speed - 2.4) * 20)  # 10-22 positions
+                # Scales from 10 positions at 30% speed to 94 positions at 100% speed
+                max_trail_length = int(10 + (self.starfield_speed - 1.8) * 20)  # 10-94 positions
                 if len(star.trail_positions) > max_trail_length:
                     star.trail_positions.pop(0)
             else:
@@ -885,9 +889,21 @@ class AudioVisualizer:
                 star.brightness = 0.3
                 star.twinkle_direction = 1
 
+    def _scale_mouse_pos(self, mouse_pos):
+        """Scale mouse coordinates from display space to render space when in fullscreen"""
+        if self.render_surface is not None:
+            # Scale from 4K display coordinates to 1080p render coordinates
+            mouse_x, mouse_y = mouse_pos
+            scaled_x = int(mouse_x * self.width / self.display_width)
+            scaled_y = int(mouse_y * self.height / self.display_height)
+            return (scaled_x, scaled_y)
+        return mouse_pos
+
     def _update_menu_visibility(self):
         """Update menu visibility based on mouse position and time"""
-        _, mouse_y = pygame.mouse.get_pos()
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_pos = self._scale_mouse_pos(mouse_pos)
+        _, mouse_y = mouse_pos
         current_time = pygame.time.get_ticks()
 
         # Show menu if mouse is near the top of the screen
@@ -1017,6 +1033,13 @@ class AudioVisualizer:
 
     def draw(self):
         """Draw the visualization"""
+        # Use render surface if in scaled fullscreen mode
+        render_target = self.render_surface if self.render_surface is not None else self.screen
+
+        # Temporarily set self.screen to render_target for all drawing operations
+        original_screen = self.screen
+        self.screen = render_target
+
         # Clear screen with black background
         self.screen.fill((0, 0, 0))
 
@@ -1071,7 +1094,7 @@ class AudioVisualizer:
             reflection_surface.fill((0, 0, 0, 0))  # Transparent background
 
             # Temporarily redirect drawing to reflection surface
-            original_screen = self.screen
+            temp_screen = self.screen
             self.screen = reflection_surface
 
             # Draw reflections to the temporary surface (adjust Y coordinates)
@@ -1090,14 +1113,14 @@ class AudioVisualizer:
                 peak_mirror_y = peak_height
                 self._draw_peak_reflection(x, peak_mirror_y, bar_width, i, glass_y=0)
 
-            # Restore original screen
-            self.screen = original_screen
+            # Restore render target
+            self.screen = temp_screen
 
             # Apply blur to the reflection surface
             if self.reflection_blur > 0:
                 reflection_surface = self._apply_blur(reflection_surface, self.reflection_blur)
 
-            # Blit the blurred reflection surface to the main screen
+            # Blit the blurred reflection surface to the render target
             self.screen.blit(reflection_surface, (0, glass_y))
 
             # Draw star reflections (after bar reflections)
@@ -1108,6 +1131,15 @@ class AudioVisualizer:
         # Draw menu bar (if visible)
         if self.menu_visible:
             self._draw_menu_bar()
+
+        # Restore original screen reference
+        self.screen = original_screen
+
+        # If we rendered to a scaled surface, scale it up to the display
+        if self.render_surface is not None:
+            # Scale the 1080p render to fill the 4K display
+            scaled = pygame.transform.scale(self.render_surface, (self.display_width, self.display_height))
+            self.screen.blit(scaled, (0, 0))
 
         pygame.display.flip()
 
@@ -1210,28 +1242,20 @@ class AudioVisualizer:
 
             # Try to get display info
             try:
-                # Get all available fullscreen modes
-                modes = pygame.display.list_modes()
-                print(f"Available display modes: {modes[:5]}...")  # Show first 5
+                # Get native display resolution (4K)
+                display_info = pygame.display.Info()
+                self.display_width = display_info.current_w
+                self.display_height = display_info.current_h
+                print(f"Native display resolution: {self.display_width}x{self.display_height}")
 
-                # Use the largest available mode (native resolution)
-                if modes and modes[0] != -1:
-                    screen_width, screen_height = modes[0]
-                    print(f"Using highest resolution: {screen_width}x{screen_height}")
-                else:
-                    # Fallback to display info
-                    display_info = pygame.display.Info()
-                    screen_width = display_info.current_w
-                    screen_height = display_info.current_h
-                    print(f"Fallback to display info: {screen_width}x{screen_height}")
+                # Set display to native resolution for fullscreen
+                self.screen = pygame.display.set_mode((self.display_width, self.display_height), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
 
-                # Use pygame's built-in fullscreen mode with explicit resolution
-                self.screen = pygame.display.set_mode((screen_width, screen_height), pygame.FULLSCREEN | pygame.HWSURFACE | pygame.DOUBLEBUF)
-
-                # Update dimensions to fullscreen
-                self.width = screen_width
-                self.height = screen_height
-                print(f"Fullscreen mode set: {self.width}x{self.height}")
+                # Render at 1080p for performance
+                self.width = 1920
+                self.height = 1080
+                self.render_surface = pygame.Surface((self.width, self.height))
+                print(f"Rendering at 1080p: {self.width}x{self.height}, scaling to {self.display_width}x{self.display_height}")
             except Exception as e:
                 print(f"Error setting fullscreen: {e}")
                 self.is_fullscreen = False
@@ -1245,6 +1269,9 @@ class AudioVisualizer:
             # Set our dimensions back to original
             self.width = self.original_width
             self.height = self.original_height
+            self.render_surface = None  # Disable scaled rendering
+            self.display_width = 0
+            self.display_height = 0
             print(f"Windowed mode set: {self.width}x{self.height}")
 
         # Update visualizer width (now full width)
@@ -1370,17 +1397,19 @@ class AudioVisualizer:
                     self.handle_resize(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # Left click
-                        self._handle_mouse_click(event.pos)
+                        scaled_pos = self._scale_mouse_pos(event.pos)
+                        self._handle_mouse_click(scaled_pos)
                 elif event.type == pygame.MOUSEBUTTONUP:
                     if event.button == 1:  # Left click release
                         self.dragging_control = None
                 elif event.type == pygame.MOUSEMOTION:
+                    scaled_pos = self._scale_mouse_pos(event.pos)
                     # Update last mouse move time for menu visibility
-                    if event.pos[1] <= self.menu_show_threshold:
+                    if scaled_pos[1] <= self.menu_show_threshold:
                         self.last_mouse_move_time = pygame.time.get_ticks()
                     # Handle slider dragging
                     if self.dragging_control is not None:
-                        self._handle_slider_drag(self.dragging_control, event.pos[0])
+                        self._handle_slider_drag(self.dragging_control, scaled_pos[0])
 
             # Update and draw
             self.update()
