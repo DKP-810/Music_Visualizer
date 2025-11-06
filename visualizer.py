@@ -13,6 +13,7 @@ import sys
 import struct
 import ctypes
 import os
+import random
 
 # Windows DPI awareness fix - must be called before pygame.init()
 if sys.platform == 'win32':
@@ -21,6 +22,20 @@ if sys.platform == 'win32':
         ctypes.windll.user32.SetProcessDPIAware()
     except:
         pass
+
+class Star:
+    """Represents a single star in the starfield"""
+    def __init__(self, x, y, size, speed, color, layer):
+        self.x = x
+        self.y = y
+        self.size = size  # Star size (0.5 to 3.0)
+        self.speed = speed  # Horizontal scroll speed (base speed)
+        self.color = color  # RGB tuple
+        self.layer = layer  # 0=back, 1=mid, 2=front
+        self.brightness = random.uniform(0.3, 1.0)  # For twinkling effect
+        self.twinkle_speed = random.uniform(0.01, 0.05)
+        self.twinkle_direction = 1
+        self.trail_positions = []  # List of (x, y) positions for warp streak effect
 
 class AudioVisualizer:
     def __init__(self, width=1280, height=720, num_bars=38):
@@ -50,9 +65,16 @@ class AudioVisualizer:
         self.original_width = self.width
         self.original_height = self.height
 
-        # Control panel settings
-        self.panel_width = 200
-        self.visualizer_width = self.width - self.panel_width
+        # Menu bar settings (replaces side panel)
+        self.menu_height = 35
+        self.menu_visible = True
+        self.last_mouse_move_time = pygame.time.get_ticks()
+        self.menu_hide_delay = 3000  # Hide after 3 seconds of inactivity
+        self.menu_show_threshold = 50  # Show when mouse is within 50px of top
+        self.open_dropdown = None  # Track which dropdown menu is open
+
+        # Visualizer now uses full width
+        self.visualizer_width = self.width
 
         # Create resizable windowed mode (explicitly NOT fullscreen)
         self.screen = pygame.display.set_mode((self.width, self.height), pygame.RESIZABLE)
@@ -78,6 +100,8 @@ class AudioVisualizer:
         self.reflection_enabled = True  # Glass reflection effect
         self.reflection_intensity = 0.6  # Reflection opacity multiplier (0.0 - 1.0)
         self.reflection_blur = 2  # Blur radius for reflection (0 - 10 pixels)
+        self.starfield_enabled = True  # Animated starfield background
+        self.starfield_speed = 1.0  # Speed multiplier for starfield (0.0 - 3.0)
 
         # Visualization data
         self.bar_heights = np.zeros(num_bars)
@@ -89,9 +113,13 @@ class AudioVisualizer:
         # Colors - Rainbow gradient
         self.colors = self._generate_rainbow_gradient()
 
-        # UI Controls
-        self.controls = self._create_controls()
+        # UI Controls - organized into dropdown menus
+        self.menu_items = self._create_menu_structure()
         self.dragging_control = None
+
+        # Starfield
+        self.stars = []
+        self._initialize_starfield()
 
         # Audio capture thread
         self.running = True
@@ -155,117 +183,186 @@ class AudioVisualizer:
         else:  # green
             self.colors = self._generate_green_gradient()
 
-    def _create_controls(self):
-        """Create UI control elements"""
-        controls = []
-        panel_x = self.visualizer_width + 10
-        y_offset = 20
+    def _initialize_starfield(self):
+        """Initialize the 3-layer parallax starfield"""
+        self.stars = []
 
-        # Bar Count Slider
-        controls.append({
-            'type': 'slider',
-            'name': 'Bars',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 20,
-            'min': 10,
-            'max': 100,
-            'value': self.num_bars,
-            'param': 'num_bars'
-        })
-        y_offset += 60
+        # Star colors - mix of white, yellow, purple, cyan like in the reference
+        star_colors = [
+            (255, 255, 255),  # White
+            (255, 255, 200),  # Pale yellow
+            (200, 200, 255),  # Pale blue
+            (255, 200, 255),  # Pale magenta/purple
+            (200, 255, 255),  # Pale cyan
+            (255, 220, 180),  # Warm white
+        ]
 
-        # Sensitivity Slider (inverted - higher slider value = more sensitive)
-        controls.append({
-            'type': 'slider',
-            'name': 'Sensitivity',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 20,
-            'min': 10,
-            'max': 50,
-            'value': 60 - self.min_db,  # Inverted display value
-            'param': 'min_db'
-        })
-        y_offset += 60
+        # Layer 0: Background - small, slow, dim stars
+        for _ in range(30):
+            x = random.uniform(0, self.width)
+            y = random.uniform(0, self.height)
+            size = random.uniform(0.5, 1.0)
+            speed = random.uniform(0.1, 0.3)
+            color = random.choice(star_colors)
+            self.stars.append(Star(x, y, size, speed, color, 0))
 
-        # Color Scheme Toggle Button
-        controls.append({
-            'type': 'button',
-            'name': 'Color Scheme',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 40,
-            'param': 'color_scheme',
-            'states': ['rainbow', 'green'],
-            'state_index': 0
-        })
-        y_offset += 70
+        # Layer 1: Midground - medium stars
+        for _ in range(20):
+            x = random.uniform(0, self.width)
+            y = random.uniform(0, self.height)
+            size = random.uniform(1.0, 2.0)
+            speed = random.uniform(0.3, 0.6)
+            color = random.choice(star_colors)
+            self.stars.append(Star(x, y, size, speed, color, 1))
 
-        # Reflection Toggle Button
-        controls.append({
-            'type': 'button',
-            'name': 'Reflection',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 40,
-            'param': 'reflection',
-            'states': ['on', 'off'],
-            'state_index': 0
-        })
-        y_offset += 70
+        # Layer 2: Foreground - large, fast, bright stars
+        for _ in range(10):
+            x = random.uniform(0, self.width)
+            y = random.uniform(0, self.height)
+            size = random.uniform(2.0, 3.5)
+            speed = random.uniform(0.6, 1.2)
+            color = random.choice(star_colors)
+            self.stars.append(Star(x, y, size, speed, color, 2))
 
-        # Reflection Intensity Slider (only visible when reflection is on)
-        controls.append({
-            'type': 'slider',
-            'name': 'Reflection Intensity',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 20,
-            'min': 0,
-            'max': 100,
-            'value': int(self.reflection_intensity * 100),
-            'param': 'reflection_intensity',
-            'visible_when': 'reflection_enabled'  # Only show when reflection is on
-        })
-        y_offset += 60
+    def _create_menu_structure(self):
+        """Create dropdown menu structure with organized controls"""
+        menu_items = []
 
-        # Reflection Blur Slider (only visible when reflection is on)
-        controls.append({
-            'type': 'slider',
-            'name': 'Blur Amount',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 20,
-            'min': 0,
-            'max': 10,
-            'value': self.reflection_blur,
-            'param': 'reflection_blur',
-            'visible_when': 'reflection_enabled'  # Only show when reflection is on
-        })
-        y_offset += 60
+        # Calculate menu item positions (horizontal layout)
+        menu_item_width = 80
+        menu_item_spacing = 10
+        menu_start_x = 10
 
-        # Peak Fall Speed Slider
-        controls.append({
-            'type': 'slider',
-            'name': 'Peak Fall Speed',
-            'x': panel_x,
-            'y': y_offset,
-            'width': 180,
-            'height': 20,
-            'min': 1,
-            'max': 50,
-            'value': int(self.peak_fall_speed * 10),  # Convert 0.5 to 5 for display
-            'param': 'peak_fall_speed'
+        # Audio Menu
+        audio_controls = [
+            {
+                'type': 'slider',
+                'name': 'Bars',
+                'width': 180,
+                'height': 20,
+                'min': 10,
+                'max': 100,
+                'value': self.num_bars,
+                'param': 'num_bars'
+            },
+            {
+                'type': 'slider',
+                'name': 'Sensitivity',
+                'width': 180,
+                'height': 20,
+                'min': 10,
+                'max': 50,
+                'value': 60 - self.min_db,
+                'param': 'min_db'
+            }
+        ]
+
+        menu_items.append({
+            'name': 'Audio',
+            'x': menu_start_x,
+            'y': 0,
+            'width': menu_item_width,
+            'height': self.menu_height,
+            'controls': audio_controls
         })
 
-        return controls
+        # Visual Menu
+        visual_controls = [
+            {
+                'type': 'button',
+                'name': 'Color Scheme',
+                'width': 180,
+                'height': 35,
+                'param': 'color_scheme',
+                'states': ['rainbow', 'green'],
+                'state_index': 0
+            },
+            {
+                'type': 'button',
+                'name': 'Starfield',
+                'width': 180,
+                'height': 35,
+                'param': 'starfield',
+                'states': ['on', 'off'],
+                'state_index': 0
+            },
+            {
+                'type': 'slider',
+                'name': 'Starfield Speed',
+                'width': 180,
+                'height': 20,
+                'min': 0,
+                'max': 300,
+                'value': int(self.starfield_speed * 100),
+                'param': 'starfield_speed',
+                'visible_when': 'starfield_enabled'
+            },
+            {
+                'type': 'button',
+                'name': 'Reflection',
+                'width': 180,
+                'height': 35,
+                'param': 'reflection',
+                'states': ['on', 'off'],
+                'state_index': 0
+            },
+            {
+                'type': 'slider',
+                'name': 'Reflection Intensity',
+                'width': 180,
+                'height': 20,
+                'min': 0,
+                'max': 100,
+                'value': int(self.reflection_intensity * 100),
+                'param': 'reflection_intensity',
+                'visible_when': 'reflection_enabled'
+            },
+            {
+                'type': 'slider',
+                'name': 'Blur Amount',
+                'width': 180,
+                'height': 20,
+                'min': 0,
+                'max': 10,
+                'value': self.reflection_blur,
+                'param': 'reflection_blur',
+                'visible_when': 'reflection_enabled'
+            }
+        ]
+
+        menu_items.append({
+            'name': 'Visual',
+            'x': menu_start_x + menu_item_width + menu_item_spacing,
+            'y': 0,
+            'width': menu_item_width,
+            'height': self.menu_height,
+            'controls': visual_controls
+        })
+
+        # Animation Menu
+        animation_controls = [
+            {
+                'type': 'slider',
+                'name': 'Peak Fall Speed',
+                'width': 180,
+                'height': 20,
+                'min': 1,
+                'max': 50,
+                'value': int(self.peak_fall_speed * 10),
+                'param': 'peak_fall_speed'
+            }
+        ]
+
+        menu_items.append({
+            'name': 'Animation',
+            'x': menu_start_x + (menu_item_width + menu_item_spacing) * 2,
+            'y': 0,
+            'width': menu_item_width,
+            'height': self.menu_height,
+            'controls': animation_controls
+        })
+
+        return menu_items
 
     def _draw_slider(self, control):
         """Draw a slider control"""
@@ -314,6 +411,11 @@ class AudioVisualizer:
                 color = (100, 50, 150)
             else:
                 color = (0, 100, 50)
+        elif control['param'] == 'starfield':
+            if current_state == 'on':
+                color = (80, 60, 120)  # Purple for starfield on
+            else:
+                color = (60, 60, 60)  # Gray for starfield off
         elif control['param'] == 'reflection':
             if current_state == 'on':
                 color = (50, 120, 180)  # Blue for reflection on
@@ -357,6 +459,9 @@ class AudioVisualizer:
         elif control['param'] == 'peak_fall_speed':
             # Convert slider value (1-50) to fall speed (0.1-5.0)
             self.peak_fall_speed = int(new_value) / 10.0
+        elif control['param'] == 'starfield_speed':
+            # Convert slider value (0-300) to speed multiplier (0.0-3.0)
+            self.starfield_speed = int(new_value) / 100.0
 
     def _handle_button_click(self, control):
         """Handle clicking a button"""
@@ -366,6 +471,8 @@ class AudioVisualizer:
         if control['param'] == 'color_scheme':
             self.color_scheme = control['states'][control['state_index']]
             self._update_colors()
+        elif control['param'] == 'starfield':
+            self.starfield_enabled = control['states'][control['state_index']] == 'on'
         elif control['param'] == 'reflection':
             self.reflection_enabled = control['states'][control['state_index']] == 'on'
 
@@ -692,6 +799,13 @@ class AudioVisualizer:
 
     def update(self):
         """Update visualization with latest audio data"""
+        # Update menu visibility based on mouse position
+        self._update_menu_visibility()
+
+        # Update starfield
+        if self.starfield_enabled:
+            self._update_starfield()
+
         # Process all available audio chunks
         while not self.audio_queue.empty():
             try:
@@ -732,17 +846,179 @@ class AudioVisualizer:
             except queue.Empty:
                 break
 
+    def _update_starfield(self):
+        """Update star positions with parallax scrolling"""
+        # Check if we should draw trails (warp speed at 80%+)
+        warp_speed = self.starfield_speed >= 2.4  # 80% of max (3.0)
+
+        for star in self.stars:
+            # Move star to the left with speed multiplier
+            actual_speed = star.speed * self.starfield_speed
+
+            # Store trail positions for warp effect
+            if warp_speed:
+                # Add current position to trail
+                star.trail_positions.append((star.x, star.y))
+                # Keep trail length based on speed (faster = longer trails)
+                max_trail_length = int(10 + (self.starfield_speed - 2.4) * 20)  # 10-22 positions
+                if len(star.trail_positions) > max_trail_length:
+                    star.trail_positions.pop(0)
+            else:
+                # Clear trails when not at warp speed
+                star.trail_positions = []
+
+            star.x -= actual_speed
+
+            # Wrap around when star goes off left edge
+            if star.x < -10:
+                star.x = self.width + 10
+                star.y = random.uniform(0, self.height)
+                star.trail_positions = []  # Clear trail on wrap
+
+            # Update twinkling (slower at high speeds)
+            twinkle_multiplier = 1.0 if self.starfield_speed < 1.5 else 0.3
+            star.brightness += star.twinkle_speed * star.twinkle_direction * twinkle_multiplier
+            if star.brightness >= 1.0:
+                star.brightness = 1.0
+                star.twinkle_direction = -1
+            elif star.brightness <= 0.3:
+                star.brightness = 0.3
+                star.twinkle_direction = 1
+
+    def _update_menu_visibility(self):
+        """Update menu visibility based on mouse position and time"""
+        _, mouse_y = pygame.mouse.get_pos()
+        current_time = pygame.time.get_ticks()
+
+        # Show menu if mouse is near the top of the screen
+        if mouse_y <= self.menu_show_threshold:
+            if not self.menu_visible:
+                self.menu_visible = True
+            self.last_mouse_move_time = current_time
+        else:
+            # Hide menu if it's been inactive for too long and no dropdown is open
+            time_since_move = current_time - self.last_mouse_move_time
+            if time_since_move > self.menu_hide_delay and self.open_dropdown is None:
+                self.menu_visible = False
+
+    def _draw_star(self, star, glass_y):
+        """Draw a star with lens flare effect and warp streaks"""
+        # Only draw stars above the glass horizon (or full height if reflection disabled)
+        if star.y > glass_y:
+            return
+
+        # Apply brightness/twinkling
+        color = tuple(int(c * star.brightness) for c in star.color)
+
+        # Draw warp streak/trail if we have trail positions
+        if len(star.trail_positions) > 1:
+            trail_count = len(star.trail_positions)
+            for i in range(trail_count - 1):
+                # Fade from back of trail (oldest) to front (newest)
+                fade = (i + 1) / trail_count
+                alpha = int(255 * star.brightness * fade * 0.6)  # Max 60% opacity for trails
+                trail_color = (*color, alpha)
+
+                # Draw trail segment
+                pos1 = star.trail_positions[i]
+                pos2 = star.trail_positions[i + 1]
+
+                # Only draw if both positions are above glass
+                if pos1[1] <= glass_y and pos2[1] <= glass_y:
+                    # Create surface for alpha blending
+                    # Calculate bounding box for the line
+                    min_x = min(pos1[0], pos2[0]) - 2
+                    max_x = max(pos1[0], pos2[0]) + 2
+                    min_y = min(pos1[1], pos2[1]) - 2
+                    max_y = max(pos1[1], pos2[1]) + 2
+                    width = max(1, int(max_x - min_x))
+                    height = max(1, int(max_y - min_y))
+
+                    surf = pygame.Surface((width, height), pygame.SRCALPHA)
+                    # Adjust coordinates relative to surface
+                    rel_pos1 = (pos1[0] - min_x, pos1[1] - min_y)
+                    rel_pos2 = (pos2[0] - min_x, pos2[1] - min_y)
+                    pygame.draw.line(surf, trail_color, rel_pos1, rel_pos2, max(1, int(star.size * 0.5)))
+                    self.screen.blit(surf, (min_x, min_y))
+
+        # Draw lens flare cross effect for larger stars
+        if star.size >= 1.5:
+            # Horizontal beam
+            beam_length = int(star.size * 3)
+            pygame.draw.line(self.screen, color,
+                           (star.x - beam_length, star.y),
+                           (star.x + beam_length, star.y), 1)
+            # Vertical beam
+            pygame.draw.line(self.screen, color,
+                           (star.x, star.y - beam_length),
+                           (star.x, star.y + beam_length), 1)
+
+        # Draw star center glow (multiple circles for glow effect)
+        glow_radius = max(1, int(star.size))
+        for i in range(glow_radius, 0, -1):
+            alpha = int(255 * star.brightness * (i / glow_radius))
+            glow_color = (*color, alpha)
+            surf = pygame.Surface((i*2+2, i*2+2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, glow_color, (i+1, i+1), i)
+            self.screen.blit(surf, (star.x - i - 1, star.y - i - 1))
+
+        # Bright center point
+        pygame.draw.circle(self.screen, (255, 255, 255), (int(star.x), int(star.y)), 1)
+
+    def _draw_star_reflection(self, star, glass_y):
+        """Draw reflected star below the glass horizon"""
+        if star.y > glass_y:
+            return  # Star is below horizon, don't reflect
+
+        # Calculate reflection position
+        distance_from_glass = glass_y - star.y
+        reflection_y = glass_y + distance_from_glass
+
+        # Don't draw if reflection is off screen
+        if reflection_y > self.height:
+            return
+
+        # Fade reflection based on distance from glass
+        max_reflection_height = self.height - glass_y
+        fade_ratio = 1.0 - (distance_from_glass / max_reflection_height)
+        fade_ratio = max(0, min(1, fade_ratio)) ** 1.5
+
+        # Apply reflection intensity and fade
+        opacity = self.reflection_intensity * fade_ratio * star.brightness
+
+        if opacity < 0.01:
+            return
+
+        # Dimmed and desaturated color for reflection
+        color = tuple(int(c * 0.7 * opacity) for c in star.color)
+
+        # Draw dimmer lens flare for reflection
+        if star.size >= 1.5:
+            beam_length = int(star.size * 2)
+            alpha_color = (*color, int(255 * opacity))
+            surf_h = pygame.Surface((beam_length*2+2, 3), pygame.SRCALPHA)
+            pygame.draw.line(surf_h, alpha_color,
+                           (0, 1), (beam_length*2, 1), 1)
+            self.screen.blit(surf_h, (star.x - beam_length, reflection_y - 1))
+
+            surf_v = pygame.Surface((3, beam_length*2+2), pygame.SRCALPHA)
+            pygame.draw.line(surf_v, alpha_color,
+                           (1, 0), (1, beam_length*2), 1)
+            self.screen.blit(surf_v, (star.x - 1, reflection_y - beam_length))
+
+        # Draw reflection glow
+        glow_radius = max(1, int(star.size * 0.8))
+        for i in range(glow_radius, 0, -1):
+            alpha = int(255 * opacity * (i / glow_radius))
+            glow_color = (*color, alpha)
+            surf = pygame.Surface((i*2+2, i*2+2), pygame.SRCALPHA)
+            pygame.draw.circle(surf, glow_color, (i+1, i+1), i)
+            self.screen.blit(surf, (star.x - i - 1, reflection_y - i - 1))
+
     def draw(self):
         """Draw the visualization"""
         # Clear screen with black background
         self.screen.fill((0, 0, 0))
-
-        # Draw control panel background
-        panel_rect = pygame.Rect(self.visualizer_width, 0, self.panel_width, self.height)
-        pygame.draw.rect(self.screen, (20, 20, 20), panel_rect)
-        pygame.draw.line(self.screen, (60, 60, 60),
-                        (self.visualizer_width, 0),
-                        (self.visualizer_width, self.height), 2)
 
         # Calculate layout - if reflection is enabled, split the visualizer area
         if self.reflection_enabled:
@@ -752,6 +1028,13 @@ class AudioVisualizer:
         else:
             glass_y = self.height
             visualizer_height = self.height
+
+        # Draw starfield behind everything (sorted by layer for proper depth)
+        if self.starfield_enabled:
+            # Sort stars by layer (back to front)
+            sorted_stars = sorted(self.stars, key=lambda s: s.layer)
+            for star in sorted_stars:
+                self._draw_star(star, glass_y)
 
         # Calculate bar dimensions to fill visualizer width (not full width)
         bar_spacing = 2
@@ -817,20 +1100,102 @@ class AudioVisualizer:
             # Blit the blurred reflection surface to the main screen
             self.screen.blit(reflection_surface, (0, glass_y))
 
-        # Draw controls
-        for control in self.controls:
-            # Check if control should be visible
+            # Draw star reflections (after bar reflections)
+            if self.starfield_enabled:
+                for star in sorted_stars:
+                    self._draw_star_reflection(star, glass_y)
+
+        # Draw menu bar (if visible)
+        if self.menu_visible:
+            self._draw_menu_bar()
+
+        pygame.display.flip()
+
+    def _draw_menu_bar(self):
+        """Draw the top menu bar with dropdown menus"""
+        # Draw menu bar background
+        menu_bar_rect = pygame.Rect(0, 0, self.width, self.menu_height)
+        pygame.draw.rect(self.screen, (30, 30, 30), menu_bar_rect)
+        pygame.draw.line(self.screen, (60, 60, 60),
+                        (0, self.menu_height),
+                        (self.width, self.menu_height), 1)
+
+        # Draw menu items
+        for menu_item in self.menu_items:
+            # Highlight if this menu is open
+            is_open = (self.open_dropdown == menu_item['name'])
+
+            # Menu item background
+            if is_open:
+                color = (50, 50, 50)
+            else:
+                color = (30, 30, 30)
+
+            menu_rect = pygame.Rect(menu_item['x'], menu_item['y'],
+                                   menu_item['width'], menu_item['height'])
+            pygame.draw.rect(self.screen, color, menu_rect)
+            pygame.draw.rect(self.screen, (80, 80, 80), menu_rect, 1)
+
+            # Menu item text
+            text_surface = self.font.render(menu_item['name'], True, (220, 220, 220))
+            text_rect = text_surface.get_rect(center=(
+                menu_item['x'] + menu_item['width'] // 2,
+                menu_item['y'] + menu_item['height'] // 2
+            ))
+            self.screen.blit(text_surface, text_rect)
+
+            # Draw dropdown arrow
+            arrow_text = self.font_small.render('▼', True, (150, 150, 150))
+            arrow_x = menu_item['x'] + menu_item['width'] - 15
+            arrow_y = menu_item['y'] + menu_item['height'] // 2 - 5
+            self.screen.blit(arrow_text, (arrow_x, arrow_y))
+
+            # Draw dropdown panel if this menu is open
+            if is_open:
+                self._draw_dropdown_panel(menu_item)
+
+    def _draw_dropdown_panel(self, menu_item):
+        """Draw dropdown panel with controls for a menu item"""
+        # Calculate panel dimensions
+        panel_padding = 10
+        panel_x = menu_item['x']
+        panel_y = menu_item['y'] + menu_item['height']
+        panel_width = 220
+
+        # Calculate panel height based on visible controls
+        visible_controls = []
+        for control in menu_item['controls']:
+            # Check visibility conditions
             if 'visible_when' in control:
-                # Only show if the condition is met
                 if control['visible_when'] == 'reflection_enabled' and not self.reflection_enabled:
                     continue
+                if control['visible_when'] == 'starfield_enabled' and not self.starfield_enabled:
+                    continue
+            visible_controls.append(control)
 
+        # Calculate height
+        control_spacing = 50
+        panel_height = panel_padding * 2 + len(visible_controls) * control_spacing
+
+        # Draw panel background
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        pygame.draw.rect(self.screen, (40, 40, 40), panel_rect)
+        pygame.draw.rect(self.screen, (100, 100, 100), panel_rect, 2)
+
+        # Draw controls inside the panel
+        y_offset = panel_y + panel_padding
+        for control in visible_controls:
+            # Set control position
+            control['x'] = panel_x + 15
+            control['y'] = y_offset
+
+            # Draw the control
             if control['type'] == 'slider':
                 self._draw_slider(control)
             elif control['type'] == 'button':
                 self._draw_button(control)
 
-        pygame.display.flip()
+            y_offset += control_spacing
 
     def toggle_fullscreen(self):
         """Toggle between fullscreen and windowed mode"""
@@ -882,23 +1247,91 @@ class AudioVisualizer:
             self.height = self.original_height
             print(f"Windowed mode set: {self.width}x{self.height}")
 
-        # Update visualizer width
-        self.visualizer_width = self.width - self.panel_width
-
-        # Update control positions
-        self._update_control_positions()
+        # Update visualizer width (now full width)
+        self.visualizer_width = self.width
 
         # Re-enable resize events after a short delay (let pending events clear)
         self.ignore_resize_until = pygame.time.get_ticks() + 500  # Ignore for 500ms
 
-    def _update_control_positions(self):
-        """Update control panel positions after resize"""
-        panel_x = self.visualizer_width + 10
-        y_offset = 20
-        for control in self.controls:
-            control['x'] = panel_x
-            control['y'] = y_offset
-            y_offset += 60 if control['type'] == 'slider' else 70
+    def _handle_mouse_click(self, mouse_pos):
+        """Handle mouse clicks on menu items and controls"""
+        mouse_x, mouse_y = mouse_pos
+
+        # Check if click is on menu bar
+        if self.menu_visible and mouse_y <= self.menu_height:
+            clicked_menu = False
+            for menu_item in self.menu_items:
+                if (menu_item['x'] <= mouse_x <= menu_item['x'] + menu_item['width'] and
+                    menu_item['y'] <= mouse_y <= menu_item['y'] + menu_item['height']):
+                    # Toggle dropdown for this menu
+                    if self.open_dropdown == menu_item['name']:
+                        self.open_dropdown = None
+                    else:
+                        self.open_dropdown = menu_item['name']
+                    clicked_menu = True
+                    self.last_mouse_move_time = pygame.time.get_ticks()  # Keep menu visible
+                    break
+
+            if not clicked_menu:
+                # Clicked on menu bar but not on a menu item - close dropdowns
+                self.open_dropdown = None
+            return
+
+        # Check if click is on an open dropdown panel
+        if self.open_dropdown is not None:
+            for menu_item in self.menu_items:
+                if menu_item['name'] == self.open_dropdown:
+                    # Calculate dropdown panel bounds
+                    panel_x = menu_item['x']
+                    panel_y = menu_item['y'] + menu_item['height']
+                    panel_width = 220
+
+                    # Calculate visible controls
+                    visible_controls = []
+                    for control in menu_item['controls']:
+                        if 'visible_when' in control:
+                            if control['visible_when'] == 'reflection_enabled' and not self.reflection_enabled:
+                                continue
+                            if control['visible_when'] == 'starfield_enabled' and not self.starfield_enabled:
+                                continue
+                        visible_controls.append(control)
+
+                    control_spacing = 50
+                    panel_height = 20 + len(visible_controls) * control_spacing
+
+                    # Check if click is inside dropdown panel
+                    if (panel_x <= mouse_x <= panel_x + panel_width and
+                        panel_y <= mouse_y <= panel_y + panel_height):
+                        # Check which control was clicked
+                        y_offset = panel_y + 10
+                        for control in visible_controls:
+                            control['x'] = panel_x + 15
+                            control['y'] = y_offset
+
+                            if control['type'] == 'slider':
+                                if (control['x'] <= mouse_x <= control['x'] + control['width'] and
+                                    control['y'] <= mouse_y <= control['y'] + control['height']):
+                                    self.dragging_control = control
+                                    self._handle_slider_drag(control, mouse_x)
+                                    self.last_mouse_move_time = pygame.time.get_ticks()
+                                    return
+                            elif control['type'] == 'button':
+                                if (control['x'] <= mouse_x <= control['x'] + control['width'] and
+                                    control['y'] <= mouse_y <= control['y'] + control['height']):
+                                    self._handle_button_click(control)
+                                    self.last_mouse_move_time = pygame.time.get_ticks()
+                                    return
+
+                            y_offset += control_spacing
+                        self.last_mouse_move_time = pygame.time.get_ticks()
+                        return
+                    else:
+                        # Clicked outside dropdown - close it
+                        self.open_dropdown = None
+                        return
+
+        # Click somewhere else - close any open dropdowns
+        self.open_dropdown = None
 
     def handle_resize(self, new_width, new_height):
         """Handle window resize"""
@@ -910,11 +1343,8 @@ class AudioVisualizer:
         print(f"Handling resize to: {new_width}x{new_height}")
         self.width = new_width
         self.height = new_height
-        self.visualizer_width = self.width - self.panel_width
+        self.visualizer_width = self.width  # Full width now
         self.screen = pygame.display.set_mode((new_width, new_height), pygame.RESIZABLE)
-
-        # Update control positions
-        self._update_control_positions()
 
     def run(self):
         """Main loop"""
@@ -940,25 +1370,17 @@ class AudioVisualizer:
                     self.handle_resize(event.w, event.h)
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # Left click
-                        mouse_x, mouse_y = event.pos
-                        # Check if click is on any control
-                        for control in self.controls:
-                            if control['type'] == 'slider':
-                                if (control['x'] <= mouse_x <= control['x'] + control['width'] and
-                                    control['y'] <= mouse_y <= control['y'] + control['height']):
-                                    self.dragging_control = control
-                                    self._handle_slider_drag(control, mouse_x)
-                            elif control['type'] == 'button':
-                                if (control['x'] <= mouse_x <= control['x'] + control['width'] and
-                                    control['y'] <= mouse_y <= control['y'] + control['height']):
-                                    self._handle_button_click(control)
+                        self._handle_mouse_click(event.pos)
                 elif event.type == pygame.MOUSEBUTTONUP:
                     if event.button == 1:  # Left click release
                         self.dragging_control = None
                 elif event.type == pygame.MOUSEMOTION:
+                    # Update last mouse move time for menu visibility
+                    if event.pos[1] <= self.menu_show_threshold:
+                        self.last_mouse_move_time = pygame.time.get_ticks()
+                    # Handle slider dragging
                     if self.dragging_control is not None:
-                        mouse_x, mouse_y = event.pos
-                        self._handle_slider_drag(self.dragging_control, mouse_x)
+                        self._handle_slider_drag(self.dragging_control, event.pos[0])
 
             # Update and draw
             self.update()
